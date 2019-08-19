@@ -188,6 +188,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 ed_num.setVisibility(View.GONE);
 
                 Utils.INSTANCE.setLoginPref(MainActivity.this, user.name, user.mobile, userId );
+                handler = new Handler(MainActivity.this.getMainLooper());
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+
+                        getDeviceLocation();
+                        handler.postDelayed(this, 5000);
+                    }
+                }, 1000);
 
             }
 
