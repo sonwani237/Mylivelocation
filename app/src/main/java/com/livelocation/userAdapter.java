@@ -38,7 +38,7 @@ public class userAdapter extends RecyclerView.Adapter<userAdapter.Myholder> {
         myholder.users.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                ((LiveUsers)ctx).getToken(mList.get(i).getEntry());
+                ((LiveUsers)ctx).getToken(mList.get(i).getEntry(), mList.get(i).getName());
             }
         });
 

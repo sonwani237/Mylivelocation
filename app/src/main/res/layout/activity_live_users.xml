@@ -9,7 +9,8 @@
 
     <com.google.android.gms.maps.MapView
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="150sp"
+        android:id="@+id/upMap"
         android:layout_weight="1"/>
 
     <androidx.recyclerview.widget.RecyclerView

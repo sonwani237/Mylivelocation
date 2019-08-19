@@ -3,12 +3,20 @@ package com.livelocation;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
+import android.content.ComponentName;
 import android.content.Intent;
+import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.IBinder;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
@@ -19,8 +27,13 @@ import android.widget.Toast;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.maps.CameraUpdateFactory;
+import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
@@ -31,42 +44,34 @@ import com.google.firebase.database.ValueEventListener;
 import java.util.ArrayList;
 import java.util.Map;
 
-public class MainActivity extends AppCompatActivity implements View.OnClickListener,
-        LocationListener,
-        GoogleApiClient.ConnectionCallbacks,
-        GoogleApiClient.OnConnectionFailedListener {
+public class MainActivity extends AppCompatActivity implements View.OnClickListener{
 
     EditText ed_name, ed_num;
     Button button;
     TextView txt_user, loc;
 
-    private DatabaseReference mFirebaseDatabase;
+    private static DatabaseReference mFirebaseDatabase;
     private FirebaseDatabase mFirebaseInstance;
 
-    private String userId;
+    private static String userId;
     private String TAG="FireBase";
+    private static final int REQUEST_PERMISSIONS = 1;
+    private static String[] PERMISSIONS = {Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION};
 
-    LocationRequest mLocationRequest;
-    GoogleApiClient mGoogleApiClient;
-    private static final long INTERVAL = 1000 * 2;
-    private static final long FASTEST_INTERVAL = 1000 * 1;
-    Location mCurrentLocation, lStart, lEnd;
+    private Location mLastKnownLocation;
+    FusedLocationProviderClient mFusedLocationProviderClient;
+    Handler handler;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        mGoogleApiClient = new GoogleApiClient.Builder(this)
-                .addApi(LocationServices.API)
-                .addConnectionCallbacks(this)
-                .addOnConnectionFailedListener(this)
-                .build();
-        mGoogleApiClient.connect();
-
         getSupportActionBar().setDisplayShowHomeEnabled(true);
         getSupportActionBar().setIcon(R.mipmap.ic_launcher);
+        mFusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this);
 
+        ReadCurrentLocationPermission();
         button = findViewById(R.id.button);
         ed_name = findViewById(R.id.ed_name);
         ed_num = findViewById(R.id.ed_num);
@@ -79,7 +84,17 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             button.setVisibility(View.GONE);
             ed_name.setVisibility(View.GONE);
             ed_num.setVisibility(View.GONE);
-            createLocationRequest();
+
+            handler = new Handler(this.getMainLooper());
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+
+                    getDeviceLocation();
+                    handler.postDelayed(this, 5000);
+                }
+            }, 1000);
+
         }
 
         FirebaseApp.initializeApp(MainActivity.this);
@@ -92,11 +107,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         mFirebaseInstance.getReference("app_title").addValueEventListener(new ValueEventListener() {
             @Override
             public void onDataChange(DataSnapshot dataSnapshot) {
-                Log.e(TAG, "App title updated");
-
                 String appTitle = dataSnapshot.getValue(String.class);
-
-                // update toolbar title
                 getSupportActionBar().setTitle(appTitle);
             }
 
@@ -109,6 +120,32 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     }
 
+    @SuppressLint("MissingPermission")
+    public void getDeviceLocation() {
+        try {
+            Task locationResult = mFusedLocationProviderClient.getLastLocation();
+            locationResult.addOnCompleteListener(this, new OnCompleteListener() {
+                @Override
+                public void onComplete(@NonNull Task task) {
+
+                    if (task.isSuccessful()) {
+                        try {
+                            mLastKnownLocation = (Location) task.getResult();
+                            LatLng coordinate = new LatLng(mLastKnownLocation.getLatitude(), mLastKnownLocation.getLongitude());
+                            Log.e(TAG, "App coordinate updated"+coordinate);
+                            loc.setText(""+coordinate);
+                            updateUser(""+mLastKnownLocation.getLatitude(), ""+mLastKnownLocation.getLongitude());
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            });
+        } catch (SecurityException e) {
+        }
+    }
+
+
     @Override
     public void onClick(View v) {
         if (v == button){
@@ -118,8 +155,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             // Check for already existed userId
             if (TextUtils.isEmpty(userId)) {
                 createUser(name, num);
-            } else {
-                updateUser(name, num);
             }
         }
     }
@@ -147,7 +182,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 txt_user.setText(user.name + ", " + user.mobile);
                 ed_num.setText("");
                 ed_name.setText("");
-                createLocationRequest();
 
                 button.setVisibility(View.GONE);
                 ed_name.setVisibility(View.GONE);
@@ -165,66 +199,35 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         });
     }
 
-    private void updateUser(String lat, String lng) {
+    public void ReadCurrentLocationPermission() {
+        if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                || ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.ACCESS_COARSE_LOCATION) ) {
 
-        mFirebaseDatabase.child(userId).child("lat").setValue(lat);
-        mFirebaseDatabase.child(userId).child("lng").setValue(lng);
-
-    }
-
-    @SuppressLint("RestrictedApi")
-    protected void createLocationRequest() {
-        mLocationRequest = new LocationRequest();
-        mLocationRequest.setInterval(INTERVAL);
-        mLocationRequest.setFastestInterval(FASTEST_INTERVAL);
-        mLocationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
-    }
-
-    @SuppressLint("MissingPermission")
-    @Override
-    public void onConnected(Bundle bundle) {
-        try {
-            LocationServices.FusedLocationApi.requestLocationUpdates(mGoogleApiClient, mLocationRequest, (com.google.android.gms.location.LocationListener) this);
-        } catch (SecurityException e) {
+            ActivityCompat.requestPermissions(this, PERMISSIONS, REQUEST_PERMISSIONS);
+        } else {
+            ActivityCompat.requestPermissions(this, PERMISSIONS, REQUEST_PERMISSIONS);
         }
     }
 
     @Override
-    public void onConnectionSuspended(int i) {
+    public void onRequestPermissionsResult(int requestCode, @NonNull String permissions[], @NonNull int[] grantResults) {
+
+        if (requestCode == REQUEST_PERMISSIONS) {
+            if (grantResults.length == 3 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                        != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission
+                        (this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    return;
+                }
+            }
+        }
     }
 
-    @Override
-    public void onLocationChanged(Location location) {
-        mCurrentLocation = location;
-        if (lStart == null) {
-            lStart = mCurrentLocation;
-            lEnd = mCurrentLocation;
-        } else
-            lEnd = mCurrentLocation;
+    public void updateUser(String lat, String lng) {
 
-        loc.setText(lStart+"   "+lEnd);
-        Toast.makeText(MainActivity.this,lStart+"   "+lEnd, Toast.LENGTH_LONG).show();
-        updateUser(""+lStart, ""+lEnd);
-    }
-
-    @Override
-    public void onStatusChanged(String provider, int status, Bundle extras) {
-
-    }
-
-    @Override
-    public void onProviderEnabled(String provider) {
-
-    }
-
-    @Override
-    public void onProviderDisabled(String provider) {
-
-    }
-
-
-    @Override
-    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
+        mFirebaseDatabase.child(userId).child("lat").setValue(lat);
+        mFirebaseDatabase.child(userId).child("lng").setValue(lng);
 
     }
 }
